@@ -1,0 +1,127 @@
+version: "3.8"
+services:
+  elasticsearch:
+    image: elasticsearch:${ELK_VERSION}
+    environment:
+      - discovery.type=single-node
+      - ES_JAVA_OPTS=-Xms1g -Xmx1g
+      - xpack.security.enabled=false
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    ports:
+      - target: 9200
+        published: 9200
+    networks:
+      - ${NETWORK_NAME}
+
+  kibana:
+    image: kibana:${ELK_VERSION}
+    ports:
+      - target: 5601
+        published: 5601
+    depends_on:
+      - elasticsearch
+    networks:
+      - ${NETWORK_NAME}
+
+  logstash:
+    image: logstash:${ELK_VERSION}
+    container_name: logstash
+    volumes:
+      - ./logstash.conf:/usr/share/logstash/pipeline/logstash.conf
+    ports:
+      - "5000:5000"
+    depends_on:
+      - elasticsearch
+    networks:
+      - ${NETWORK_NAME}
+
+  redis:     
+    image: 'redis:${REDIS_VERSION}'     
+    ports:       
+      - 6379:6379     
+    environment:       
+      - REDIS_PASSWORD=${REDIS_PASSWORD}  
+    networks:
+      - ${NETWORK_NAME}
+
+  db:
+    image: mcr.microsoft.com/mssql/server:${SQL_SERVER_VERSION}
+    environment:
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD}
+      ACCEPT_EULA: "Y"
+    ports:
+      - "1435:1433"
+    volumes:
+      - sql-data:/var/opt/mssql
+    networks:
+      - ${NETWORK_NAME}
+
+  movieapi:
+    container_name: API_MOVIE
+    build:
+      context: Movie.API/
+      dockerfile: Dockerfile
+    ports:
+      - "37061:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=${ASPNETCORE_ENVIRONMENT}
+      - ConnectionStrings__MoviesEntities=Server=db;Initial Catalog=${DB_NAME_MOVIE};User=sa;Password=${MSSQL_SA_PASSWORD};TrustServerCertificate=True;Encrypt=True;
+      - ConnectionStrings__RedisConnection=redis:6379,password=${REDIS_PASSWORD}
+      - ConnectionStrings__LogStash=${LOG_STASH_HOST}
+      - ConnectionStrings__rabbitMqSettingsHost=${RABBITMQ_HOST}
+      - ConnectionStrings__rabbitMqSettingsUsername=${RABBITMQ_USER}
+      - ConnectionStrings__rabbitMqSettingsPassword=${RABBITMQ_PASS}
+    depends_on:
+      - db
+      - rabbitmq
+    networks:
+      - ${NETWORK_NAME}
+
+  moviequeryapi:
+    container_name: API_MOVIE_QUERY
+    build:
+      context: Query.Movie.API/
+      dockerfile: Dockerfile
+    ports:
+      - "37062:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=${ASPNETCORE_ENVIRONMENT}
+      - ConnectionStrings__RedisConnection=redis:6379,password=${REDIS_PASSWORD}
+      - ConnectionStrings__LogStash=${LOG_STASH_HOST}
+      - ConnectionStrings__ElasticSearchConnection=${ELASTICSEARCH_HOST}
+      - ConnectionStrings__rabbitMqSettingsHost=${RABBITMQ_HOST}
+      - ConnectionStrings__rabbitMqSettingsUsername=${RABBITMQ_USER}
+      - ConnectionStrings__rabbitMqSettingsPassword=${RABBITMQ_PASS}
+    depends_on:
+      - db
+      - rabbitmq
+    networks:
+      - ${NETWORK_NAME}    
+
+  rabbitmq:
+    image: rabbitmq:4.0-management
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"   
+      - "15672:15672" 
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS}
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - ${NETWORK_NAME} 
+
+volumes:
+  es_data:
+    driver: local
+  sql-data:
+    driver: local
+  rabbitmq_data:
+    driver: local
+
+networks:
+  cqrspattern:
+    name: ${NETWORK_NAME}
+    driver: bridge
